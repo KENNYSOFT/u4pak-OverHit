@@ -1,7 +1,7 @@
-u4pak
+u4pak-OverHit
 =====
 
-Unpack, pack, list, test and mount Unreal Engine 4 .pak archives.
+Unpack, list, and test Unreal Engine 4 OverHit .pak archives.
 
 Basic usage:
 
@@ -9,13 +9,8 @@ Basic usage:
     u4pak.py test <archive>                 - test archive integrity
     u4pak.py unpack <archive>               - extract .pak archive
     u4pak.py pack <archive> <files>         - create .pak archive
-    u4pak.py mount <archive> <mount-point>  - mount archive as read-only file system
 
-Only unencryped and uncompressed archives of version 1, 2, 3 and 4 are supported.
-Note that only version 2 and 3 are tested and version 4 is read-only.
-
-The `mount` command depends on the [llfuse](https://code.google.com/p/python-llfuse/)
-Python package. If it's not available the rest is still working.
+Only archives of version 4 is supported.
 
 This script is compatible with Python 2.7 and 3 (tested with 2.7.5 and 3.3.2).
 
@@ -23,8 +18,8 @@ If you get errors saying anything about `'utf8' codec can't decode byte [...]` t
 use another encoding by passing `--encoding=iso-8859-1` or similar.
 
 If you get an error message about an illegal file magic try to pass `--ignore-magic`.
-If you get an error message about the archive version being 0 try to pass
-`--force-version=1` (or a higher number).
+If you get an error message about the archive version not being 4 try to pass
+`--force-version=4`.
 
 File Format
 -----------
@@ -64,23 +59,14 @@ contain offset pointers to the data records.
         24     4  uint32_t     compression method:
                                   0x00 ... none
                                   0x01 ... zlib
-                                  0x10 ... bias memory
-                                  0x20 ... bias speed
-    if version <= 1
-        28     8  uint64_t     timestamp
+        28    20  uint8_t[20]  unknown
+        48    20  uint8_t[20]  data sha1 hash
+    if compression method != 0x00
+        68     4  uint32_t     block count (M)
+        72  M*16  CB[M]        compression blocks
     end
-         ?    20  uint8_t[20]  data sha1 hash
-    if version >= 3
-     if compression method != 0x00
-      ?+20     4  uint32_t     block count (M)
-      ?+24  M*16  CB[M]        compression blocks
-     end
          ?     1  uint8_t      is encrypted
        ?+1     4  uint32_t     compression block size
-    end
-    if version >= 4
-         ?     1  uint32_t     unknown
-    end
 
 ### Compression Block (CB)
 
@@ -97,7 +83,7 @@ Size: 16 bytes
 ### Data Record
 
     Offset  Size  Type            Description
-         0     ?  Record          file metadata (offset field is 0, N = compressed_size)
+         0     ?  Record          file metadata (offset field is 0, N = (if encrypted) ceiling(compressed_size / 16) * 16 (else) compressed_size)
          ?     N  uint8_t[N]      file data
 
 ### Index Record
@@ -117,14 +103,15 @@ Size: 16 bytes
 
 ### Footer
 
-Size: 44 bytes
+Size: 52 bytes
 
     Offset  Size  Type         Description
          0     4  uint32_t     magic: 0x5A6F12E1
-         4     4  uint32_t     version: 1, 2, or 3
-         8     8  uint64_t     index offset
-        16     8  uint64_t     index size
-        24    20  uint8_t[20]  index sha1 hash
+         4     4  uint32_t     version: 4
+         8     8  uint64_t     patch version
+        16     8  uint64_t     index offset
+        24     8  uint64_t     index size
+        32    20  uint8_t[20]  index sha1 hash
 
 Related Projects
 ----------------
