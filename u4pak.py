@@ -392,19 +392,16 @@ class Record(namedtuple('RecordBase', [
 	'timestamp', 'sha1', 'compression_blocks', 'encrypted', 'compression_block_size'])):
 
 	def sendfile(self,outfile,infile):
+		if self.encrypted:
+			infile.seek(self.data_offset)
+			data_content = infile.read(self.data_size)
+			data_decrypt = AES.new("E1A1F2E4AA066C54BD5090F463EDDF58".encode(), AES.MODE_ECB).decrypt(data_content)[:self.compressed_size]
 		if self.compression_method == COMPR_NONE:
 			if self.encrypted:
-				infile.seek(self.data_offset)
-				data_content = infile.read(self.data_size)
-				data_decrypt = AES.new("E1A1F2E4AA066C54BD5090F463EDDF58".encode(), AES.MODE_ECB).decrypt(data_content)[:self.compressed_size]
 				outfile.write(data_decrypt)
 				return
 			sendfile(outfile, infile, self.data_offset, self.uncompressed_size)
 		elif self.compression_method == COMPR_ZLIB:
-			if self.encrypted:
-				infile.seek(self.data_offset)
-				data_content = infile.read(self.data_size)
-				data_decrypt = AES.new("E1A1F2E4AA066C54BD5090F463EDDF58".encode(), AES.MODE_ECB).decrypt(data_content)[:self.compressed_size]
 			for block in self.compression_blocks:
 				block_offset = block[0]
 				block_size = block[1] - block[0]
@@ -644,7 +641,7 @@ def main(argv):
 
 			return parser
 
-	parser = argparse.ArgumentParser(description='unpack, list and mount Unreal Engine 4 .pak archives')
+	parser = argparse.ArgumentParser(description='unpack and list Unreal Engine 4 OverHit .pak archives')
 	parser.register('action', 'parsers', AliasedSubParsersAction)
 	parser.set_defaults(print0=False,verbose=False,check_integrity=False,progress=False,zlib=False,command=None)
 
