@@ -33,6 +33,7 @@ from struct import unpack as st_unpack, pack as st_pack
 from collections import OrderedDict, namedtuple
 from io import DEFAULT_BUFFER_SIZE
 from binascii import hexlify
+from Crypto.Cipher import AES
 
 HAS_STAT_NS = hasattr(os.stat_result, 'st_atime_ns')
 
@@ -392,15 +393,27 @@ class Record(namedtuple('RecordBase', [
 
 	def sendfile(self,outfile,infile):
 		if self.compression_method == COMPR_NONE:
+			if self.encrypted:
+				infile.seek(self.data_offset)
+				data_content = infile.read(self.data_size)
+				data_decrypt = AES.new("E1A1F2E4AA066C54BD5090F463EDDF58".encode(), AES.MODE_ECB).decrypt(data_content)[:self.compressed_size]
+				outfile.write(data_decrypt)
+				return
 			sendfile(outfile, infile, self.data_offset, self.uncompressed_size)
 		elif self.compression_method == COMPR_ZLIB:
 			if self.encrypted:
-				raise NotImplementedError('zlib decompression with encryption is not implemented yet')
+				infile.seek(self.data_offset)
+				data_content = infile.read(self.data_size)
+				data_decrypt = AES.new("E1A1F2E4AA066C54BD5090F463EDDF58".encode(), AES.MODE_ECB).decrypt(data_content)[:self.compressed_size]
 			for block in self.compression_blocks:
 				block_offset = block[0]
 				block_size = block[1] - block[0]
-				infile.seek(block_offset)
-				block_content = infile.read(block_size)
+				if self.encrypted:
+					block_offset -= self.data_offset
+					block_content = data_decrypt[block_offset:block_offset+block_size]
+				else:
+					infile.seek(block_offset)
+					block_content = infile.read(block_size)
 				block_decompress = zlib.decompress(block_content)
 				outfile.write(block_decompress)
 		else:
