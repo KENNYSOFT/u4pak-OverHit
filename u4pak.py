@@ -239,6 +239,31 @@ class Pak(object):
 							 hasher.hexdigest(),
 							 hexlify(sha1).decode('latin1')))
 
+		def check_original_data(ctx, offset, size, original_sha1):
+			hasher = hashlib.sha1()
+			stream.seek(offset, 0)
+
+			buf = stream.read(size)
+			if ctx.encrypted:
+				buf = AES.new("E1A1F2E4AA066C54BD5090F463EDDF58".encode(), AES.MODE_ECB).decrypt(buf)[:ctx.compressed_size]
+			if ctx.compression_method == COMPR_ZLIB:
+				for block in ctx.compression_blocks:
+					block_offset = block[0] - ctx.data_offset
+					block_size = block[1] - block[0]
+					block_content = buf[block_offset:block_offset+block_size]
+					block_decompress = zlib.decompress(block_content)
+					hasher.update(block_decompress)
+			else:
+				hasher.update(buf)
+
+			if hasher.digest() != original_sha1:
+				callback(ctx,
+						 'checksum missmatch:\n'
+						 '\tgot:      %s\n'
+						 '\texpected: %s' % (
+							 hasher.hexdigest(),
+							 hexlify(original_sha1).decode('latin1')))
+
 		# test index sha1 sum
 		check_data("<archive index>", index_offset, self.index_size, self.index_sha1)
 
@@ -264,6 +289,8 @@ class Pak(object):
 			# XXX: I don't know if the sha1 is of the comressed (and encrypted) data
 			#      or if it would need to uncompress (and decrypt) the data first.
 			check_data(r1, r1.data_offset, r1.data_size, r1.sha1)
+			if r1.compression_method != COMPR_NONE or r1.encrypted:
+				check_original_data(r1, r1.data_offset, r1.data_size, r1.original_sha1)
 
 	def unpack(self,stream,outdir=".",callback=lambda name: None):
 		for record in self:
@@ -298,19 +325,20 @@ class Pak(object):
 
 			count = 0
 			sum_size = 0
-			out.write("    Offset        Size  Compr-Method  Compr-Size  SHA1                                      Name%s" % delim)
+			out.write("    Offset        Size  Compr-Method  Compr-Size  Original SHA1                             SHA1                                      Name%s" % delim)
 			for record in records:
 				size  = size_to_str(record.uncompressed_size)
 				sha1  = hexlify(record.sha1).decode('latin1')
+				osha1 = hexlify(record.original_sha1).decode('latin1')
 				cmeth = record.compression_method
 
 				if cmeth == COMPR_NONE:
-					out.write("%10u  %10s             -           -  %s  %s%s" % (
-						record.data_offset, size, sha1, record.filename, delim))
+					out.write("%10u  %10s             -           -  %s  %s  %s%s" % (
+						record.data_offset, size, osha1, sha1, record.filename, delim))
 				else:
-					out.write("%10u  %10s  %12s  %10s  %s  %s%s" % (
+					out.write("%10u  %10s  %12s  %10s  %s  %s  %s%s" % (
 						record.data_offset, size, COMPR_METHOD_NAMES[cmeth],
-						size_to_str(record.compressed_size), sha1,
+						size_to_str(record.compressed_size), osha1, sha1,
 						record.filename, delim))
 				count += 1
 				sum_size += record.uncompressed_size
@@ -389,7 +417,7 @@ COMPR_METHOD_NAMES = {
 
 class Record(namedtuple('RecordBase', [
 	'filename', 'offset', 'compressed_size', 'uncompressed_size', 'compression_method',
-	'timestamp', 'sha1', 'compression_blocks', 'encrypted', 'compression_block_size'])):
+	'timestamp', 'original_sha1', 'sha1', 'compression_blocks', 'encrypted', 'compression_block_size'])):
 
 	def sendfile(self,outfile,infile):
 		if self.encrypted:
@@ -444,10 +472,10 @@ class Record(namedtuple('RecordBase', [
 		return 16 * math.ceil(self.compressed_size / 16) if self.encrypted else self.compressed_size
 
 class RecordV4(Record):
-	def __new__(cls, filename, offset, compressed_size, uncompressed_size, compression_method, sha1,
+	def __new__(cls, filename, offset, compressed_size, uncompressed_size, compression_method, original_sha1, sha1,
 				compression_blocks, encrypted, compression_block_size):
 		return Record.__new__(cls, filename, offset, compressed_size, uncompressed_size,
-							  compression_method, None, sha1, compression_blocks, encrypted,
+							  compression_method, None, original_sha1, sha1, compression_blocks, encrypted,
 							  compression_block_size)
 
 	@property
@@ -465,7 +493,7 @@ def read_path(stream,encoding='utf-8'):
 	return stream.read(path_len).rstrip(b'\0').decode(encoding).replace('/',os.path.sep)
 
 def read_record_v4(stream, filename):
-	offset, compressed_size, uncompressed_size, compression_method, unknown, sha1 = \
+	offset, compressed_size, uncompressed_size, compression_method, original_sha1, sha1 = \
 		st_unpack('<QQQI20s20s', stream.read(68))
 
 	# sys.stdout.write('compression_method = %s\n' % compression_method)
@@ -479,7 +507,7 @@ def read_record_v4(stream, filename):
 	encrypted, compression_block_size = st_unpack('<BI', stream.read(5))
 
 	return RecordV4(filename, offset, compressed_size, uncompressed_size, compression_method,
-					sha1, blocks, encrypted != 0, compression_block_size)
+					original_sha1, sha1, blocks, encrypted != 0, compression_block_size)
 
 def read_index(stream,check_integrity=False,ignore_magic=False,encoding='utf-8',force_version=None):
 	stream.seek(-52, 2)

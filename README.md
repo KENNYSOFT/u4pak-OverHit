@@ -59,7 +59,7 @@ contain offset pointers to the data records.
         24     4  uint32_t     compression method:
                                   0x00 ... none
                                   0x01 ... zlib
-        28    20  uint8_t[20]  unknown
+        28    20  uint8_t[20]  original file sha1 hash
         48    20  uint8_t[20]  data sha1 hash
     if compression method != 0x00
         68     4  uint32_t     block count (M)
